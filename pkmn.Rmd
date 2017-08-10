@@ -1,0 +1,271 @@
+---
+title: "Pkmn"
+author: "Brian"
+date: "August 9, 2017"
+output: html_document
+#runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggthemes)
+library(knitr)
+library(mlr)
+library(RColorBrewer)
+library(jsonlite)
+library(data.table)
+```
+
+This R Markdown document is made interactive using Shiny. Unlike the more traditional workflow of creating static reports, you can now create documents that allow your readers to change the assumptions underlying your analysis and see the results immediately. 
+
+# Hashtag creates header
+{r} = shows code + results
+{r eval=FALSE} = shows code only
+{r echo=FALSE} = shows results only
+Embed R code in text: Value is `r 2+2` = 4 ; shows "Value is 4"
+
+## Dependencies
+```{r eval=FALSE}
+library(tidyverse)
+library(ggthemes)
+library(knitr)
+library(mlr)
+library(RColorBrewer)
+library(jsonlite)
+```
+
+# Load JSON from pasted text file
+```{r}
+pkmnjson <- fromJSON('C:/kaggle/pkmn/smogon_scrape.txt')
+```
+
+
+# Clean up "alts" data from JSON and binding it to original dataset
+```{r}
+#Create id column for joining
+pkmnjson$id <- 1:nrow(pkmnjson)
+
+#Convert alts column into dataframe and join
+bind <- rbindlist(pkmnjson$alts,fill=TRUE, use.names=TRUE, idcol="id")
+pkmn <- merge(x=pkmnjson,y=bind,by="id", all.y=TRUE)
+remove(bind)
+
+#Remove original alts column
+pkmn$alts <- NULL
+
+#Clean Evolutions column for Pokemon with no evolutions
+pkmn$evos[pkmn$evos == "character(0)"] <- NA
+
+#Clean formats column for Pokemon which are not in any format (mid-stage evolution)
+pkmn$formats[pkmn$formats == "list()"] <- "None"
+pkmn$formats[pkmn$formats == "AG"] <- "Uber"
+
+#Convert Formats to Factor
+pkmn$formats <- as.factor(unlist(pkmn$formats))
+pkmn$formats <- factor(pkmn$formats,levels = c("Uber","OU","Limbo","BL","UU","BL2","RU","BL3","NU","BL4","PU","LC","None"))
+
+#As Limbo defaults to OU when the pokemon are available, convert Limbo to OU
+pkmn$formats[pkmn$formats == "Limbo"] <- "OU"
+
+#Rename suffix column to mega, create mega dummy variable
+colnames(pkmn)[which(names(pkmn) == "suffix")] <- "mega"
+pkmn$mega_dummy <- pkmn$mega %>% recode_factor('Mega' = 1, .default=0)
+
+#Create Full Name column
+pkmn$fullname <- paste(pkmn$name,pkmn$mega,sep=" ")
+
+#Create BST column
+pkmn <- pkmn %>% mutate(bst = hp+atk+def+spa+spd+spe)
+```
+
+```{r}
+#Load Smogon old dataset, merge Legendary column
+smogon <- read.csv("C:/kaggle/pkmn/smogon.csv", stringsAsFactors = FALSE, head=TRUE)
+pkmn <- merge(pkmn,smogon[,c("Name","Legendary")],by.x="name",by.y="Name",all.x=TRUE)
+colnames(pkmn)[which(names(pkmn) == "Legendary")] <- "legendary"
+pkmn$legendary[is.na(pkmn$legendary)] <- FALSE
+
+##Get ndex number from Pokedex dataset
+pkmndex <- read.csv("C:/kaggle/pkmn/pokemon.csv",header=TRUE,stringsAsFactors = FALSE, encoding = 'UTF8')
+ndexlist <- unique(pkmndex[,c("species","ndex")])
+
+#Remove duplicated Reverse Groudon/Kyroge Primal
+ndexlist <- ndexlist[!(ndexlist$species == "Groudon" & ndexlist$ndex == 382),]
+ndexlist <- ndexlist[!(ndexlist$species == "Kyogre" & ndexlist$ndex == 383),]
+
+#Fix symbols for Nidoran-M and Nidoran-F and Farfetch'd
+ndexlist$species[29] <- "Nidoran-F"
+ndexlist$species[32] <- "Nidoran-M"
+ndexlist$species[83] <- "Farfetch'd"
+
+# Merge ndex with pkmn
+pkmn <- merge(x=pkmn,y=ndexlist,by.x="name",by.y="species",all.x=TRUE)
+pkmn <- pkmn %>% group_by(ndex) %>% arrange(ndex,fullname)
+remove(ndexlist)
+
+# Remove Smogon JSON id and replace with new unique
+pkmn$id <- 1:nrow(pkmn)
+
+#Convert legendary column to dummy factor
+pkmn$legendary_dummy <- factor(ifelse(pkmn$legendary,"1","0"))
+
+```
+
+
+# K-means Clustering based on Pokemon Stats / Tier
+```{r}
+stat_cols <- c("hp","atk","def","spa","spd","spe","bst")
+stat_cols_nobst <- c("hp","atk","def","spa","spd","spe")
+actual <- pkmn$formats
+
+set.seed(500)
+kmeans1 <- kmeans(pkmn[,stat_cols],13, nstart=100, iter.max=50)
+paste("kmeans1:",(kmeans1$betweenss/kmeans1$totss*100),"%",sep="")
+# 13 Clusters -> between_SS / total_SS =  68.5 %
+table(actual,kmeans1$cluster)
+
+pkmn_comp <- pkmn %>% filter(formats != "LC" & formats != "None")
+kmeans2 <- kmeans(pkmn_comp[,stat_cols],11, nstart=100, iter.max=50)
+paste("kmeans2:",kmeans2$betweenss/kmeans2$totss*100,"%",sep="")
+actual2 <- pkmn_comp$formats
+table(actual2,kmeans2$cluster)
+# 11 Clusters -> (between_SS / total_SS =  60.2 %) # Without None becomes 67.2%
+
+# Combine BL tiers with tier above to reduce classes
+pkmn2 <- pkmn
+pkmn2$formats[pkmn2$formats == "Limbo"] <- "OU"
+pkmn2$formats[pkmn2$formats == "BL"] <- "OU"
+pkmn2$formats[pkmn2$formats == "BL2"] <- "UU"
+pkmn2$formats[pkmn2$formats == "BL3"] <- "RU"
+pkmn2$formats[pkmn2$formats == "BL4"] <- "NU"
+pkmn2$formats <- factor(pkmn2$formats,levels = c("Uber","OU","UU","RU","NU","PU","LC","None"))
+# Now only 8 levels
+
+# Try Kmeans without BL tiers
+kmeans3 <- kmeans(pkmn2[,stat_cols],8, nstart=100, iter.max=50)
+paste("kmeans3:",kmeans3$betweenss/kmeans3$totss*100,"%",sep="")
+# 8 Clusters: (between_SS / total_SS =  61.1 %)
+actual3 <- pkmn2$formats
+table(actual3,kmeans3$cluster)
+
+# Try Kmeans without BL tiers and without LC/None
+pkmn2_comp <- pkmn2 %>% filter(formats != "LC" & formats != "None")
+pkmn2_comp$formats <- factor(pkmn2_comp$formats,levels = c("Uber","OU","UU","RU","NU","PU"))
+
+kmeans4 <- kmeans(pkmn2_comp[,stat_cols],6, nstart=100, iter.max=50)
+paste("kmeans4:",kmeans4$betweenss/kmeans4$totss*100,"%",sep="")
+# 6 Clusters: (between_SS / total_SS =  47.2 %)
+actual4 <- pkmn2_comp$formats
+table(actual4,kmeans4$cluster)
+
+```
+
+# Graphing Kmeans Results
+```{r}
+# PCA
+pkmn_pca <- prcomp(pkmn[,stat_cols], rank.=2)
+pkmn_pca
+eig <- (pkmn_pca$sdev)^2
+var <- eig*100/sum(eig)
+cumvar <- cumsum(var)
+all_eig <- data.frame(eig = eig, variance = var,
+                     cumvariance = cumvar)
+all_eig
+
+plot(pkmn_pca, type="l")
+# Shows that first 2 PCAs account for 86% of variance already
+
+pkmn_pca <- prcomp(pkmn[,stat_cols_nobst], rank.=5)
+pkmn_pca
+eig <- (pkmn_pca$sdev)^2
+var <- eig*100/sum(eig)
+cumvar <- cumsum(var)
+all_eig <- data.frame(eig = eig, variance = var,
+                     cumvariance = cumvar)
+all_eig
+
+plot(pkmn_pca, type="l")
+#plot(pkmn$bst, col=kmeans1$cluster)
+#centers1 <- kmeans1$centers
+#ggplot(aes=)
+```
+
+# Random Forest
+```{r}
+#pkmn2
+pkmn3 <- pkmn2[,c("ndex","name","fullname","hp","atk","def","spa","spd","spe","bst","mega_dummy","legendary_dummy","formats")]
+
+prcomp(pkmn3[,4:12])
+
+trainTask <- makeClassifTask(data = pkmn3[], target="formats")
+```
+
+
+
+
+## Loading and Previewing Dataset
+```{r}
+pkmndex <- read.csv("C:/kaggle/pkmn/pokemon.csv",header=TRUE,stringsAsFactors = FALSE, encoding = 'UTF8')
+#glimpse(pkmn)
+#summary(pkmn)
+#kable(pkmn)
+```
+
+The accented e in Pokemon is showing up as "Ã©" - find and replace with gsub
+```{r}
+pkmn$class <- gsub('Ã©','e',pkmn$class)
+pkmn$dex1 <- gsub('Ã©','e',pkmn$dex1)
+pkmn$dex2 <- gsub('Ã©','e',pkmn$dex2)
+#pkmn$dex1 <- gsub('â€™',"'",pkmn$dex1)
+#pkmn$dex2 <- gsub('â€™',"'",pkmn$dex2)
+```
+
+Adding Generations to each Pokemon
+
+
+
+```{r eruptions, echo=FALSE, eval=FALSE}
+To learn more, see [Interactive Documents](http://rmarkdown.rstudio.com/authoring_shiny.html).
+
+## Inputs and Outputs
+
+You can embed Shiny inputs and outputs in your document. Outputs are automatically updated whenever inputs change.  This demonstrates how a standard R plot can be made interactive by wrapping it in the Shiny `renderPlot` function. The `selectInput` and `sliderInput` functions create the input widgets used to drive the plot.
+
+inputPanel(
+  selectInput("n_breaks", label = "Number of bins:",
+              choices = c(10, 20, 35, 50), selected = 20),
+  
+  sliderInput("bw_adjust", label = "Bandwidth adjustment:",
+              min = 0.2, max = 2, value = 1, step = 0.2)
+)
+
+renderPlot({
+  hist(faithful$eruptions, probability = TRUE, breaks = as.numeric(input$n_breaks),
+       xlab = "Duration (minutes)", main = "Geyser eruption duration")
+  
+  dens <- density(faithful$eruptions, adjust = input$bw_adjust)
+  lines(dens, col = "blue")
+})
+```
+```{r tabsets, echo=FALSE, eval=FALSE}
+## Embedded Application
+
+It's also possible to embed an entire Shiny application within an R Markdown document using the `shinyAppDir` function. This example embeds a Shiny application located in another directory:
+
+shinyAppDir(
+  system.file("examples/06_tabsets", package = "shiny"),
+  options = list(
+    width = "100%", height = 550
+  )
+)
+
+
+Note the use of the `height` parameter to determine how much vertical space the embedded application should occupy.
+
+You can also use the `shinyApp` function to define an application inline rather then in an external directory.
+
+In all of R code chunks above the `echo = FALSE` attribute is used. This is to prevent the R code within the chunk from rendering in the document alongside the Shiny components.
+```
+
+
