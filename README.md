@@ -1,37 +1,30 @@
-## Welcome to GitHub Pages
+## Pokemon Smogon Tier List - EDA and Tier Placement Predictions for Gen 7 Pokemon
 
-You can use the [editor on GitHub](https://github.com/brianwcfong/pokemon-smogon/edit/master/README.md) to maintain and preview the content for your website in Markdown files.
+### Abstract
+This directory is a work in progress containing data exploration of data scraped from the [Smogon University](www.smogon.com/dex/sm/pokemon/) in Aug 2017 and explores the data to find relationships between a Pokemon's stats, moves and other factors and their placement in the Smogon Tier List. The goal is to create classification models that can predict which Tier (e.g. Uber, OU, UU, RU, NU) new Pokemon belong to.
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+### Data Sources
+* Data was scraped from the Page Source of [Smogon's Gen SM Pokedex](www.smogon.com/dex/sm/pokemon/), which contains all Pokemon/Moves/Items from Gen 1-7 in JSON format. Additional sources were found online and used to supplement the Smogon data. These files are included as CSV in the directory.
 
-### Markdown
-
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
-
-```markdown
-Syntax highlighted code block
-
-# Header 1
-## Header 2
-### Header 3
-
-- Bulleted
-- List
-
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
+### Dependencies
+R Version 3.4.0 was used, along with the following libraries:
 ```
+library(tidyverse)
+library(ggthemes)
+library(knitr)
+library(mlr)
+library(RColorBrewer)
+library(jsonlite)
+library(data.table)
+```
+![alt text](./pokemon.csv "Sample Data")
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
+### Author
+* Brian Fong
+brian.fong@thinkbiganalytics.com
 
-### Jekyll Themes
+### License
+* This repository is under the GPL V3 license
 
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/brianwcfong/pokemon-smogon/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
-
-### Support or Contact
-
-Having trouble with Pages? Check out our [documentation](https://help.github.com/categories/github-pages-basics/) or [contact support](https://github.com/contact) and we’ll help you sort it out.
+### Built With
+* R Version 3.4.0 with RStudio
